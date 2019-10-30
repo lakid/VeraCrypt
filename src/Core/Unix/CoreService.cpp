@@ -3,8 +3,8 @@
  Copyright (c) 2008-2012 TrueCrypt Developers Association and which is governed
  by the TrueCrypt License 3.0.
 
- Modifications and additions to the original source code (contained in this file) 
- and all other portions of this file are Copyright (c) 2013-2016 IDRIX
+ Modifications and additions to the original source code (contained in this file)
+ and all other portions of this file are Copyright (c) 2013-2017 IDRIX
  and are governed by the Apache License 2.0 the full text of which is
  contained in the file License.txt included in VeraCrypt binary and source
  code distribution packages.
@@ -13,6 +13,7 @@
 #include "CoreService.h"
 #include <fcntl.h>
 #include <sys/wait.h>
+#include <stdio.h>
 #include "Platform/FileStream.h"
 #include "Platform/MemoryStream.h"
 #include "Platform/Serializable.h"
@@ -30,7 +31,7 @@ namespace VeraCrypt
 	auto_ptr <T> CoreService::GetResponse ()
 	{
 		auto_ptr <Serializable> deserializedObject (Serializable::DeserializeNew (ServiceOutputStream));
-		
+
 		Exception *deserializedException = dynamic_cast <Exception*> (deserializedObject.get());
 		if (deserializedException)
 			deserializedException->Throw();
@@ -60,11 +61,11 @@ namespace VeraCrypt
 					throw_sys_if (read (STDIN_FILENO, &b, 1) != 1);
 					if (b != 0x00)
 						continue;
-					
+
 					throw_sys_if (read (STDIN_FILENO, &b, 1) != 1);
 					if (b != 0x11)
 						continue;
-					
+
 					throw_sys_if (read (STDIN_FILENO, &b, 1) != 1);
 					if (b == 0x22)
 						break;
@@ -113,7 +114,7 @@ namespace VeraCrypt
 						if (!ElevatedServiceAvailable)
 						{
 							finally_do_arg (string *, &request->AdminPassword, { StringConverter::Erase (*finally_arg); });
-							
+
 							CoreService::StartElevated (*request);
 							ElevatedServiceAvailable = true;
 						}
@@ -128,7 +129,7 @@ namespace VeraCrypt
 					if (checkRequest)
 					{
 						Core->CheckFilesystem (checkRequest->MountedVolumeInfo, checkRequest->Repair);
-						
+
 						CheckFilesystemResponse().Serialize (outputStream);
 						continue;
 					}
@@ -263,7 +264,7 @@ namespace VeraCrypt
 		GetHostDevicesRequest request (pathListOnly);
 		return SendRequest <GetHostDevicesResponse> (request)->HostDevices;
 	}
-	
+
 	shared_ptr <VolumeInfo> CoreService::RequestMountVolume (MountOptions &options)
 	{
 		MountVolumeRequest request (&options);
@@ -288,6 +289,41 @@ namespace VeraCrypt
 			request.FastElevation = !ElevatedServiceAvailable;
 			request.ApplicationExecutablePath = Core->GetApplicationExecutablePath();
 
+			//	Test if the user has an active "sudo" session.
+			//	This is only done under Linux / FreeBSD by executing the command 'sudo -n uptime'.
+			//	In case a "sudo" session is active, the result of the command contains the string 'load average'.
+			//	Otherwise, the result contains "sudo: a password is required".
+			//	This may not work on all OSX versions because of a bug in sudo in its version 1.7.10,
+			//	therefore we keep the old behaviour of sending a 'dummy' password under OSX.
+			//	See : https://superuser.com/questions/902826/why-does-sudo-n-on-mac-os-x-always-return-0
+			
+#if defined(TC_LINUX ) || defined (TC_FREEBSD)
+			
+			//	Set to false to force the 'WarningEvent' to be raised in case of and elevation exception.
+			request.FastElevation = false;
+			
+			std::vector<char> buffer(128, 0);
+			std::string result;
+			
+			FILE* pipe = popen("sudo -n uptime 2>&1 | grep 'load average' | wc -l", "r");	//	We redirect stderr to stdout (2>&1) to be able to catch the result of the command
+			if (pipe)
+			{
+				while (!feof(pipe))
+				{
+					if (fgets(buffer.data(), 128, pipe) != nullptr)
+						result += buffer.data();
+				}
+				
+				fflush(pipe);
+				pclose(pipe);
+				pipe = NULL;
+				
+				if (!result.empty() && strlen(result.c_str()) != 0 && !memcmp(result.c_str(), "0", 1))
+				{
+					(*AdminPasswordCallback) (request.AdminPassword);
+				}
+			}
+#endif
 			while (!ElevatedServiceAvailable)
 			{
 				try
@@ -396,6 +432,7 @@ namespace VeraCrypt
 		vector <char> adminPassword (request.AdminPassword.size() + 1);
 		int timeout = 6000;
 
+		//	'request.FastElevation' is always false under Linux / FreeBSD
 		if (request.FastElevation)
 		{
 			string dummyPassword = "dummy\n";
@@ -456,7 +493,8 @@ namespace VeraCrypt
 				inPipe->Close();
 				outPipe->Close();
 				errPipe.Close();
-				
+
+				//	'request.FastElevation' is always false under Linux / FreeBSD
 				if (request.FastElevation)
 				{
 					// Prevent defunct process
@@ -532,7 +570,7 @@ namespace VeraCrypt
 		ExitRequest exitRequest;
 		exitRequest.Serialize (ServiceInputStream);
 	}
-	
+
 	shared_ptr <GetStringFunctor> CoreService::AdminPasswordCallback;
 
 	auto_ptr <Pipe> CoreService::AdminInputPipe;

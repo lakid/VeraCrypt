@@ -3,8 +3,8 @@
 # Copyright (c) 2008-2012 TrueCrypt Developers Association and which is governed
 # by the TrueCrypt License 3.0.
 #
-# Modifications and additions to the original source code (contained in this file) 
-# and all other portions of this file are Copyright (c) 2013-2016 IDRIX
+# Modifications and additions to the original source code (contained in this file)
+# and all other portions of this file are Copyright (c) 2013-2017 IDRIX
 # and are governed by the Apache License 2.0 the full text of which is
 # contained in the file License.txt included in VeraCrypt binary and source
 # code distribution packages.
@@ -20,6 +20,10 @@
 # RESOURCEDIR:	Run-time resource directory
 # VERBOSE:		Enable verbose messages
 # WXSTATIC:		Use static wxWidgets library
+# SSSE3:		Enable SSSE3 support in compiler
+# SSE41:		Enable SSE4.1 support in compiler
+# NOSSE2:		Disable SEE2 support in compiler
+# WITHGTK3:		Build wxWidgets against GTK3
 
 #------ Targets ------
 # all
@@ -36,13 +40,13 @@ export BUILD_INC := $(BASE_DIR)/Build/Include
 export AR ?= ar
 export CC ?= gcc
 export CXX ?= g++
-export AS := nasm
+export AS := yasm
 export RANLIB ?= ranlib
 
 export CFLAGS := -Wall
 export CXXFLAGS := -Wall -Wno-unused-parameter
 C_CXX_FLAGS := -MMD -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_LARGE_FILES -I$(BASE_DIR) -I$(BASE_DIR)/Crypto
-export ASFLAGS := -Ox -D __GNUC__
+export ASFLAGS := -D __GNUC__ -D __YASM__
 export LFLAGS :=
 
 export PKG_CONFIG_PATH ?= /usr/local/lib/pkgconfig
@@ -87,6 +91,9 @@ ifeq "$(origin WXSTATIC)" "command line"
 	export VC_WX_STATIC := 1
 	WX_CONFIG = $(WX_BUILD_DIR)/wx-config
 	WX_CONFIG_ARGS += --static
+	ifneq "$(WXSTATIC)" "FULL"
+		export VC_WX_MINIMAL := 1
+	endif
 endif
 
 
@@ -114,7 +121,7 @@ endif
 
 ifeq "$(origin DEBUGGER)" "command line"
 
-	C_CXX_FLAGS += -ggdb  
+	C_CXX_FLAGS += -ggdb
 	WX_CONFIGURE_FLAGS += --enable-debug_gdb --enable-debug_info
 
 endif
@@ -127,18 +134,19 @@ export PLATFORM_ARCH := "Unknown"
 export PLATFORM_UNSUPPORTED := 0
 
 export CPU_ARCH ?= unknown
+export SIMD_SUPPORTED := 0
 
-ARCH = $(shell uname -p)
-ifeq "$(ARCH)" "unknown"
-	ARCH = $(shell uname -m)
-endif
+ARCH ?= $(shell uname -m)
 
 ifneq (,$(filter i386 i486 i586 i686 x86,$(ARCH)))
 	CPU_ARCH = x86
-    ASFLAGS += -f elf32
+    ASFLAGS += -f elf32 -D __BITS__=32
 else ifneq (,$(filter x86_64 x86-64 amd64 x64,$(ARCH)))
 	CPU_ARCH = x64
-    ASFLAGS += -f elf64
+    ASFLAGS += -f elf64 -D __BITS__=64
+else ifneq (,$(filter armv7l,$(ARCH)))
+	PLATFORM_ARCH := armv7
+	CPU_ARCH = armv7
 endif
 
 ifeq "$(origin NOASM)" "command line"
@@ -147,10 +155,16 @@ endif
 
 ifeq "$(CPU_ARCH)" "x86"
 	PLATFORM_ARCH := i386
+	SIMD_SUPPORTED := 1
 	C_CXX_FLAGS += -D TC_ARCH_X86
 else ifeq "$(CPU_ARCH)" "x64"
 	PLATFORM_ARCH := amd64
+	SIMD_SUPPORTED := 1
 	C_CXX_FLAGS += -D TC_ARCH_X64
+endif
+
+ifeq "$(origin NOSSE2)" "command line"
+	SIMD_SUPPORTED := 0
 endif
 
 
@@ -160,19 +174,43 @@ ifeq "$(shell uname -s)" "Linux"
 
 	PLATFORM := Linux
 	C_CXX_FLAGS += -DTC_UNIX -DTC_LINUX
+	
+	ifeq "$(SIMD_SUPPORTED)" "1"
+		CFLAGS += -msse2
+		CXXFLAGS += -msse2
+
+		GCC_GTEQ_440 := $(shell expr `gcc -dumpversion | sed -e 's/\.\([0-9][0-9]\)/\1/g' -e 's/\.\([0-9]\)/0\1/g' -e 's/^[0-9]\{3,4\}$$/&00/' -e 's/^[0-9]\{1,2\}$$/&0000/'` \>= 40400)
+		GCC_GTEQ_430 := $(shell expr `gcc -dumpversion | sed -e 's/\.\([0-9][0-9]\)/\1/g' -e 's/\.\([0-9]\)/0\1/g' -e 's/^[0-9]\{3,4\}$$/&00/' -e 's/^[0-9]\{1,2\}$$/&0000/'` \>= 40300)
+		ifeq "$(GCC_GTEQ_440)" "1"
+			CFLAGS += -maes
+			CXXFLAGS += -maes
+		endif
+
+		ifeq "$(GCC_GTEQ_430)" "1"
+			ifeq "$(origin SSSE3)" "command line"
+				CFLAGS += -mssse3
+				CXXFLAGS += -mssse3
+			endif
+
+			ifeq "$(origin SSE41)" "command line"
+				CFLAGS += -mssse3 -msse4.1
+				CXXFLAGS += -mssse3 -msse4.1
+			endif
+		endif
+	endif
 
 	ifeq "$(TC_BUILD_CONFIG)" "Release"
-		C_CXX_FLAGS += -fdata-sections -ffunction-sections
-		LFLAGS += -Wl,--gc-sections
+		C_CXX_FLAGS += -fdata-sections -ffunction-sections -fpie
+		LFLAGS += -Wl,--gc-sections -pie
 
 		ifneq "$(shell ld --help 2>&1 | grep sysv | wc -l)" "0"
 			LFLAGS += -Wl,--hash-style=sysv
 		endif
 
-		WXCONFIG_CFLAGS += -fdata-sections -ffunction-sections
-		WXCONFIG_CXXFLAGS += -fdata-sections -ffunction-sections
+		WXCONFIG_CFLAGS += -fdata-sections -ffunction-sections -fpie
+		WXCONFIG_CXXFLAGS += -fdata-sections -ffunction-sections -fpie
 	endif
-	
+
 	ifneq "$(origin WXSTATIC)" "command line"
 		LFLAGS += -ldl
 	else
@@ -181,6 +219,17 @@ ifeq "$(shell uname -s)" "Linux"
 			CXXFLAGS += -D_GLIBCXX_USE_CXX11_ABI=0
 			WXCONFIG_CXXFLAGS += -D_GLIBCXX_USE_CXX11_ABI=0
 		endif
+	endif
+	
+	ifeq "$(origin NOSSE2)" "command line"
+		CFLAGS += -mno-sse2
+		CXXFLAGS += -mno-sse2
+		WXCONFIG_CFLAGS += -mno-sse2
+		WXCONFIG_CXXFLAGS += -mno-sse2
+	endif
+	
+	ifeq "$(origin WITHGTK3)" "command line"
+		WX_CONFIGURE_FLAGS += --with-gtk=3
 	endif
 
 endif
@@ -191,28 +240,48 @@ ifeq "$(shell uname -s)" "Darwin"
 
 	PLATFORM := MacOSX
 	APPNAME := VeraCrypt
-	
+
 	export VC_OSX_TARGET ?= 10.7
+	export VC_OSX_SDK ?= $(VC_OSX_TARGET)
 
 	#check to see if XCode 3 path exists.Otherwise, use XCode 4 path
-	VC_OSX_SDK  := /Developer/SDKs/MacOSX$(VC_OSX_TARGET).sdk
-	ifeq ($(wildcard $(VC_OSX_SDK)/SDKSettings.plist),)
-		VC_OSX_SDK := /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX$(VC_OSX_TARGET).sdk
+	VC_OSX_SDK_PATH  := /Developer/SDKs/MacOSX$(VC_OSX_SDK).sdk
+	ifeq ($(wildcard $(VC_OSX_SDK_PATH)/SDKSettings.plist),)
+		VC_OSX_SDK_PATH := /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX$(VC_OSX_SDK).sdk
+	endif
+	
+	#----- Legacy build if OSX <= 10.8: we build both 32-bit and 64-bit ----
+	ifneq (,$(filter 10.6 10.7 10.8,$(VC_OSX_TARGET)))
+		export VC_LEGACY_BUILD := 1
 	endif
 
 	CC := gcc
 	CXX := g++
 
-	C_CXX_FLAGS += -DTC_UNIX -DTC_BSD -DTC_MACOSX -mmacosx-version-min=$(VC_OSX_TARGET) -isysroot $(VC_OSX_SDK)
-	LFLAGS += -mmacosx-version-min=$(VC_OSX_TARGET) -Wl,-syslibroot $(VC_OSX_SDK)
-	WX_CONFIGURE_FLAGS += --with-macosx-version-min=$(VC_OSX_TARGET) --with-macosx-sdk=$(VC_OSX_SDK)
+	C_CXX_FLAGS += -DTC_UNIX -DTC_BSD -DTC_MACOSX -mmacosx-version-min=$(VC_OSX_TARGET) -isysroot $(VC_OSX_SDK_PATH)
+	LFLAGS += -mmacosx-version-min=$(VC_OSX_TARGET) -Wl,-syslibroot $(VC_OSX_SDK_PATH)
+	WX_CONFIGURE_FLAGS += --with-macosx-version-min=$(VC_OSX_TARGET) --with-macosx-sdk=$(VC_OSX_SDK_PATH)
 
 	ifeq "$(CPU_ARCH)" "x64"
 		CPU_ARCH = x86
 	endif
 
-	AS := $(BASE_DIR)/Build/Tools/MacOSX/nasm
-	ASFLAGS += --prefix _
+	CFLAGS += -msse2
+	CXXFLAGS += -msse2
+
+	ifeq "$(origin SSSE3)" "command line"
+		CFLAGS += -mssse3
+		CXXFLAGS += -mssse3
+	endif
+
+	ifeq "$(origin SSE41)" "command line"
+		CFLAGS += -mssse3 -msse4.1
+		CXXFLAGS += -mssse3 -msse4.1
+	endif
+
+	AS := $(BASE_DIR)/Build/Tools/MacOSX/yasm
+	export ASFLAGS32 := -D __GNUC__ -D __YASM__ -D __BITS__=32 --prefix=_ -f macho32
+	export ASFLAGS64 := -D __GNUC__ -D __YASM__ -D __BITS__=64 --prefix=_ -f macho64
 
 	ifeq "$(TC_BUILD_CONFIG)" "Release"
 
@@ -221,10 +290,18 @@ ifeq "$(shell uname -s)" "Darwin"
 		S := $(C_CXX_FLAGS)
 		C_CXX_FLAGS = $(subst -MMD,,$(S))
 
-		C_CXX_FLAGS += -gfull -arch i386 -arch x86_64
-		LFLAGS += -Wl,-dead_strip -arch i386 -arch x86_64
+		C_CXX_FLAGS += -gfull -arch x86_64
+		LFLAGS += -Wl,-dead_strip -arch x86_64
+		
+		#----- Legacy build: we build both 32-bit and 64-bit ----
+		ifdef VC_LEGACY_BUILD
+			C_CXX_FLAGS += -arch i386
+			LFLAGS += -arch i386
+			WX_CONFIGURE_FLAGS += --enable-universal_binary=i386,x86_64
+		else
+			WX_CONFIGURE_FLAGS += --disable-universal_binary
+		endif
 
-		WX_CONFIGURE_FLAGS += --enable-universal_binary=i386,x86_64
 		WXCONFIG_CFLAGS += -gfull
 		WXCONFIG_CXXFLAGS += -gfull
 
@@ -244,6 +321,43 @@ ifeq "$(shell uname -s)" "FreeBSD"
 	PLATFORM := FreeBSD
 	PLATFORM_UNSUPPORTED := 1
 	C_CXX_FLAGS += -DTC_UNIX -DTC_BSD -DTC_FREEBSD
+	
+	CC := cc
+	CXX := c++
+	
+	ifeq "$(TC_BUILD_CONFIG)" "Release"
+		C_CXX_FLAGS += -fdata-sections -ffunction-sections -fpie
+		LFLAGS += -Wl,--gc-sections -pie
+
+		ifneq "$(shell ld --help 2>&1 | grep sysv | wc -l)" "0"
+			LFLAGS += -Wl,--hash-style=sysv
+		endif
+
+		WXCONFIG_CFLAGS += -fpie -fPIC
+		WXCONFIG_CXXFLAGS += -fpie -fPIC
+	endif
+
+	ifeq "$(SIMD_SUPPORTED)" "1"
+		CFLAGS += -msse2 -maes
+		CXXFLAGS += -msse2 -maes
+
+		ifeq "$(origin SSSE3)" "command line"
+			CFLAGS += -mssse3
+			CXXFLAGS += -mssse3
+		endif
+
+		ifeq "$(origin SSE41)" "command line"
+			CFLAGS += -mssse3 -msse4.1
+			CXXFLAGS += -mssse3 -msse4.1
+		endif
+	endif
+	
+	ifeq "$(origin NOSSE2)" "command line"
+		CFLAGS += -mno-sse2
+		CXXFLAGS += -mno-sse2
+		WXCONFIG_CFLAGS += -mno-sse2
+		WXCONFIG_CXXFLAGS += -mno-sse2
+	endif
 
 endif
 
@@ -266,8 +380,10 @@ CFLAGS := $(C_CXX_FLAGS) $(CFLAGS) $(TC_EXTRA_CFLAGS)
 CXXFLAGS := $(C_CXX_FLAGS) $(CXXFLAGS) $(TC_EXTRA_CXXFLAGS)
 LFLAGS := $(LFLAGS) $(TC_EXTRA_LFLAGS)
 
-WX_CONFIGURE_FLAGS += --enable-unicode -disable-shared --disable-dependency-tracking --disable-compat26 --enable-exceptions --enable-std_string --enable-dataobj --enable-mimetype \
-	--disable-protocol --disable-protocols --disable-url --disable-ipc --disable-sockets --disable-fs_inet --disable-ole --disable-docview --disable-clipboard \
+WX_CONFIGURE_FLAGS += --enable-unicode -disable-shared --disable-dependency-tracking --enable-exceptions --enable-std_string --enable-dataobj --enable-mimetype
+
+ifdef VC_WX_MINIMAL
+WX_CONFIGURE_FLAGS += --disable-protocol --disable-protocols --disable-url --disable-ipc --disable-sockets --disable-fs_inet --disable-ole --disable-docview --disable-clipboard \
 	--disable-help --disable-html --disable-mshtmlhelp --disable-htmlhelp --disable-mdi --disable-metafile --disable-webkit --disable-webview \
 	--disable-xrc --disable-aui --disable-postscript --disable-printarch \
 	--disable-arcstream --disable-fs_archive --disable-fs_zip --disable-tarstream --disable-zipstream \
@@ -280,13 +396,20 @@ WX_CONFIGURE_FLAGS += --enable-unicode -disable-shared --disable-dependency-trac
 	--disable-richtext --disable-dialupman --disable-debugreport --disable-filesystem --disable-rearrangectrl --disable-treelist --disable-richmsgdlg \
 	--disable-richtooltip --disable-propgrid --disable-stc --without-libnotify \
 	--without-gtkprint --without-gnomevfs --disable-fsvolume --disable-fswatcher \
-	--disable-graphics_ctx --disable-sound --disable-mediactrl --disable-joystick --disable-apple_ieee \
+	--disable-sound --disable-mediactrl --disable-joystick --disable-apple_ieee \
 	--disable-gif --disable-pcx --disable-tga --disable-iff --disable-gif --disable-pnm --disable-svg \
 	--without-expat --without-libtiff --without-libjpeg --without-libpng -without-regex --without-zlib
-
-ifeq "$(PLATFORM)" "Linux"	
+	
+ifeq "$(PLATFORM)" "Linux"
 WX_CONFIGURE_FLAGS += --disable-tooltips
+ifneq "$(origin WITHGTK3)" "command line"
+	WX_CONFIGURE_FLAGS += --disable-graphics_ctx
 endif
+else
+	WX_CONFIGURE_FLAGS += --disable-graphics_ctx
+endif
+endif
+
 
 #------ Project build ------
 
@@ -301,8 +424,13 @@ all clean:
 		PROJ=$$(echo $$DIR | cut -d/ -f1); \
 		$(MAKE) -C $$DIR -f $$PROJ.make NAME=$$PROJ $(MAKECMDGOALS) || exit $?; \
 		export LIBS="$(BASE_DIR)/$$DIR/$$PROJ.a $$LIBS"; \
-	done	
+	done
 
+install:
+	$(MAKE) -C Main -f Main.make NAME=Main install
+
+package:
+	$(MAKE) -C Main -f Main.make NAME=Main package
 
 #------ wxWidgets build ------
 
@@ -323,6 +451,6 @@ endif
 	mkdir -p "$(WX_BUILD_DIR)"
 	@echo Configuring wxWidgets library...
 	cd "$(WX_BUILD_DIR)" && "$(WX_ROOT)/configure" $(WX_CONFIGURE_FLAGS) >/dev/null
-	
+
 	@echo Building wxWidgets library...
-	cd "$(WX_BUILD_DIR)" && $(MAKE)
+	cd "$(WX_BUILD_DIR)" && $(MAKE) -j 4

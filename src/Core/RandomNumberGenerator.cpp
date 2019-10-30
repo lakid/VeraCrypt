@@ -3,8 +3,8 @@
  Copyright (c) 2008-2012 TrueCrypt Developers Association and which is governed
  by the TrueCrypt License 3.0.
 
- Modifications and additions to the original source code (contained in this file) 
- and all other portions of this file are Copyright (c) 2013-2016 IDRIX
+ Modifications and additions to the original source code (contained in this file)
+ and all other portions of this file are Copyright (c) 2013-2017 IDRIX
  and are governed by the Apache License 2.0 the full text of which is
  contained in the file License.txt included in VeraCrypt binary and source
  code distribution packages.
@@ -46,6 +46,16 @@ namespace VeraCrypt
 
 			throw_sys_sub_if (read (random, buffer, buffer.Size()) == -1 && errno != EAGAIN, L"/dev/random");
 			AddToPool (buffer);
+			
+			/* use JitterEntropy library to get good quality random bytes based on CPU timing jitter */
+			if (JitterRngCtx)
+			{
+				ssize_t rndLen = jent_read_entropy (JitterRngCtx, (char*) buffer.Ptr(), buffer.Size());
+				if (rndLen > 0)
+				{
+					AddToPool (buffer);
+				}
+			}
 		}
 #endif
 	}
@@ -80,6 +90,12 @@ namespace VeraCrypt
 		ScopeLock lock (AccessMutex);
 		size_t bufferLen = buffer.Size(), loopLen;
 		byte* pbBuffer = buffer.Get();
+		
+		// Initialize JitterEntropy RNG for this call
+		if (0 == jent_entropy_init ())
+		{
+			JitterRngCtx = jent_entropy_collector_alloc (1, 0);
+		}
 
 		// Poll system for data
 		AddSystemDataToPool (fast);
@@ -124,8 +140,14 @@ namespace VeraCrypt
 				if (ReadOffset >= PoolSize)
 					ReadOffset = 0;
 			}
-			
+
 			pbBuffer += loopLen;
+		}
+		
+		if (JitterRngCtx)
+		{
+			jent_entropy_collector_free (JitterRngCtx);
+			JitterRngCtx = NULL;
 		}
 	}
 
@@ -173,7 +195,7 @@ namespace VeraCrypt
 		Running = true;
 		EnrichedByUser = false;
 
-		Pool.Allocate (PoolSize);
+		Pool.Allocate (PoolSize, 16);
 		Test();
 
 		if (!PoolHash)
@@ -186,7 +208,7 @@ namespace VeraCrypt
 	}
 
 	void RandomNumberGenerator::Stop ()
-	{		
+	{
 		ScopeLock lock (AccessMutex);
 
 		if (Pool.IsAllocated())
@@ -232,4 +254,5 @@ namespace VeraCrypt
 	size_t RandomNumberGenerator::ReadOffset;
 	bool RandomNumberGenerator::Running = false;
 	size_t RandomNumberGenerator::WriteOffset;
+	struct rand_data *RandomNumberGenerator::JitterRngCtx = NULL;
 }

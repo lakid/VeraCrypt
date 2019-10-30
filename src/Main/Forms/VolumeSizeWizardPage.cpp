@@ -3,8 +3,8 @@
  Copyright (c) 2008-2012 TrueCrypt Developers Association and which is governed
  by the TrueCrypt License 3.0.
 
- Modifications and additions to the original source code (contained in this file) 
- and all other portions of this file are Copyright (c) 2013-2016 IDRIX
+ Modifications and additions to the original source code (contained in this file)
+ and all other portions of this file are Copyright (c) 2013-2017 IDRIX
  and are governed by the Apache License 2.0 the full text of which is
  contained in the file License.txt included in VeraCrypt binary and source
  code distribution packages.
@@ -21,7 +21,8 @@ namespace VeraCrypt
 		MaxVolumeSize (0),
 		MaxVolumeSizeValid (false),
 		MinVolumeSize (1),
-		SectorSize (sectorSize)
+		SectorSize (sectorSize),
+		AvailableDiskSpace (0)
 	{
 		VolumeSizePrefixChoice->Append (LangString["KB"], reinterpret_cast <void *> (1024));
 		VolumeSizePrefixChoice->Append (LangString["MB"], reinterpret_cast <void *> (1024 * 1024));
@@ -33,6 +34,10 @@ namespace VeraCrypt
 		{
 			VolumeSizeTextCtrl->Disable();
 			VolumeSizeTextCtrl->SetValue (L"");
+		}
+		else
+		{
+			AvailableDiskSpace = (uint64) diskSpace.GetValue ();
 		}
 
 		FreeSpaceStaticText->SetFont (Gui->GetDefaultBoldFont (this));
@@ -74,7 +79,7 @@ namespace VeraCrypt
 			return 0;
 
 		prefixMult = reinterpret_cast <uint64> (VolumeSizePrefixChoice->GetClientData (selection));
-		
+
 		uint64 val = StringConverter::ToUInt64 (wstring (VolumeSizeTextCtrl->GetValue()));
 		if (val <= 0x7fffFFFFffffFFFFull / prefixMult)
 		{
@@ -97,7 +102,8 @@ namespace VeraCrypt
 		{
 			try
 			{
-				if (GetVolumeSize() >= MinVolumeSize && (!MaxVolumeSizeValid || GetVolumeSize() <= MaxVolumeSize))
+				uint64 uiVolumeSize = GetVolumeSize();
+				if (uiVolumeSize >= MinVolumeSize && (!MaxVolumeSizeValid || uiVolumeSize <= MaxVolumeSize) && (CmdLine->ArgDisableFileSizeCheck || !AvailableDiskSpace || uiVolumeSize <= AvailableDiskSpace))
 					return true;
 			}
 			catch (...) { }
@@ -119,7 +125,7 @@ namespace VeraCrypt
 			VolumeSizeTextCtrl->SetValue (L"");
 			return;
 		}
-		
+
 		if (size % (1024 * 1024 * 1024) == 0)
 		{
 			size /= 1024 * 1024 * 1024;

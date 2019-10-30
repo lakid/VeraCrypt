@@ -3,8 +3,8 @@
  Copyright (c) 2008-2012 TrueCrypt Developers Association and which is governed
  by the TrueCrypt License 3.0.
 
- Modifications and additions to the original source code (contained in this file) 
- and all other portions of this file are Copyright (c) 2013-2016 IDRIX
+ Modifications and additions to the original source code (contained in this file)
+ and all other portions of this file are Copyright (c) 2013-2017 IDRIX
  and are governed by the Apache License 2.0 the full text of which is
  contained in the file License.txt included in VeraCrypt binary and source
  code distribution packages.
@@ -36,7 +36,7 @@ using namespace std;
 
 namespace VeraCrypt
 {
-	SecurityTokenKeyfile::SecurityTokenKeyfile (const SecurityTokenKeyfilePath &path, char* pin)
+	SecurityTokenKeyfile::SecurityTokenKeyfile (const SecurityTokenKeyfilePath &path)
 	{
 		wstring pathStr = path;
 		unsigned long slotId;
@@ -52,7 +52,7 @@ namespace VeraCrypt
 
 		Id = pathStr.substr (keyIdPos + wstring (L"/" TC_SECURITY_TOKEN_KEYFILE_URL_FILE L"/").size());
 
-		vector <SecurityTokenKeyfile> keyfiles = SecurityToken::GetAvailableKeyfiles (&SlotId, Id, pin);
+		vector <SecurityTokenKeyfile> keyfiles = SecurityToken::GetAvailableKeyfiles (&SlotId, Id);
 
 		if (keyfiles.empty())
 			throw SecurityTokenKeyfileNotFound();
@@ -174,13 +174,13 @@ namespace VeraCrypt
 	void SecurityToken::DeleteKeyfile (const SecurityTokenKeyfile &keyfile)
 	{
 		LoginUserIfRequired (keyfile.SlotId);
-		
+
 		CK_RV status = Pkcs11Functions->C_DestroyObject (Sessions[keyfile.SlotId].Handle, keyfile.Handle);
 		if (status != CKR_OK)
 			throw Pkcs11Exception (status);
 	}
 
-	vector <SecurityTokenKeyfile> SecurityToken::GetAvailableKeyfiles (CK_SLOT_ID *slotIdFilter, const wstring keyfileIdFilter, char* pin)
+	vector <SecurityTokenKeyfile> SecurityToken::GetAvailableKeyfiles (CK_SLOT_ID *slotIdFilter, const wstring keyfileIdFilter)
 	{
 		bool unrecognizedTokenPresent = false;
 		vector <SecurityTokenKeyfile> keyfiles;
@@ -194,7 +194,7 @@ namespace VeraCrypt
 
 			try
 			{
-				LoginUserIfRequired (slotId, pin);
+				LoginUserIfRequired (slotId);
 				token = GetTokenInfo (slotId);
 			}
 			catch (UserAbort &)
@@ -314,12 +314,7 @@ namespace VeraCrypt
 
 	void SecurityToken::GetKeyfileData (const SecurityTokenKeyfile &keyfile, vector <byte> &keyfileData)
 	{
-		GetKeyfileData (keyfile, nullptr, keyfileData);
-	}
-
-	void SecurityToken::GetKeyfileData (const SecurityTokenKeyfile &keyfile, char* pin, vector <byte> &keyfileData)
-	{
-		LoginUserIfRequired (keyfile.SlotId, pin);
+		LoginUserIfRequired (keyfile.SlotId);
 		GetObjectAttribute (keyfile.SlotId, keyfile.Handle, CKA_VALUE, keyfileData);
 	}
 
@@ -339,7 +334,7 @@ namespace VeraCrypt
 
 		finally_do_arg (CK_SLOT_ID, slotId, { Pkcs11Functions->C_FindObjectsFinal (Sessions[finally_arg].Handle); });
 
-		CK_ULONG objectCount;	
+		CK_ULONG objectCount;
 		vector <CK_OBJECT_HANDLE> objects;
 
 		while (true)
@@ -438,7 +433,7 @@ namespace VeraCrypt
 		Sessions[slotId].UserLoggedIn = true;
 	}
 
-	void SecurityToken::LoginUserIfRequired (CK_SLOT_ID slotId, char* cmdPin)
+	void SecurityToken::LoginUserIfRequired (CK_SLOT_ID slotId)
 	{
 		CheckLibraryStatus();
 		CK_RV status;
@@ -451,7 +446,7 @@ namespace VeraCrypt
 		{
 			CK_SESSION_INFO sessionInfo;
 			status = Pkcs11Functions->C_GetSessionInfo (Sessions[slotId].Handle, &sessionInfo);
-			
+
 			if (status == CKR_OK)
 			{
 				Sessions[slotId].UserLoggedIn = (sessionInfo.state == CKS_RO_USER_FUNCTIONS || sessionInfo.state == CKS_RW_USER_FUNCTIONS);
@@ -478,10 +473,6 @@ namespace VeraCrypt
 					status = Pkcs11Functions->C_Login (Sessions[slotId].Handle, CKU_USER, NULL_PTR, 0);
 					if (status != CKR_OK)
 						throw Pkcs11Exception (status);
-				}
-				else if (cmdPin && cmdPin [0])
-				{
-					Login (slotId, cmdPin);
 				}
 				else
 				{
@@ -511,12 +502,7 @@ namespace VeraCrypt
 				}
 				else if (error == CKR_PIN_INCORRECT && !(tokenInfo.Flags & CKF_PROTECTED_AUTHENTICATION_PATH))
 				{
-					if (cmdPin && cmdPin [0])
-					{
-						// clear wrong PIN
-						size_t cmdPinLen = strlen (cmdPin);
-						burn (cmdPin, cmdPinLen);
-					}
+					PinCallback->notifyIncorrectPin ();
 					(*WarningCallback) (Pkcs11Exception (CKR_PIN_INCORRECT));
 					continue;
 				}
@@ -542,7 +528,7 @@ namespace VeraCrypt
 		Pkcs11LibraryHandle = dlopen (pkcs11LibraryPath.c_str(), RTLD_NOW | RTLD_LOCAL);
 		throw_sys_sub_if (!Pkcs11LibraryHandle, dlerror());
 #endif
-		
+
 
 		typedef CK_RV (*C_GetFunctionList_t) (CK_FUNCTION_LIST_PTR_PTR ppFunctionList);
 #ifdef TC_WINDOWS

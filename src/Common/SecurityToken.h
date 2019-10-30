@@ -3,8 +3,8 @@
  Copyright (c) 2008-2012 TrueCrypt Developers Association and which is governed
  by the TrueCrypt License 3.0.
 
- Modifications and additions to the original source code (contained in this file) 
- and all other portions of this file are Copyright (c) 2013-2016 IDRIX
+ Modifications and additions to the original source code (contained in this file)
+ and all other portions of this file are Copyright (c) 2013-2017 IDRIX
  and are governed by the Apache License 2.0 the full text of which is
  contained in the file License.txt included in VeraCrypt binary and source
  code distribution packages.
@@ -74,7 +74,7 @@ namespace VeraCrypt
 	struct SecurityTokenKeyfile
 	{
 		SecurityTokenKeyfile () : Handle(CK_INVALID_HANDLE), SlotId(CK_UNAVAILABLE_INFORMATION) { Token.SlotId = CK_UNAVAILABLE_INFORMATION; Token.Flags = 0; }
-		SecurityTokenKeyfile (const SecurityTokenKeyfilePath &path, char* pin = nullptr);
+		SecurityTokenKeyfile (const SecurityTokenKeyfilePath &path);
 
 		operator SecurityTokenKeyfilePath () const;
 
@@ -139,7 +139,7 @@ namespace VeraCrypt
 	{
 		void Show (HWND parent) const { Error (SecurityTokenLibraryPath[0] == 0 ? "NO_PKCS11_MODULE_SPECIFIED" : "PKCS11_MODULE_INIT_FAILED", parent); }
 	};
-	
+
 	struct InvalidSecurityTokenKeyfilePath : public Exception
 	{
 		void Show (HWND parent) const { Error ("INVALID_TOKEN_KEYFILE_PATH", parent); }
@@ -170,6 +170,7 @@ namespace VeraCrypt
 	{
 		virtual ~GetPinFunctor () { }
 		virtual void operator() (string &str) = 0;
+		virtual void notifyIncorrectPin () = 0;
 	};
 
 	struct SendExceptionFunctor
@@ -185,9 +186,8 @@ namespace VeraCrypt
 		static void CloseLibrary ();
 		static void CreateKeyfile (CK_SLOT_ID slotId, vector <byte> &keyfileData, const string &name);
 		static void DeleteKeyfile (const SecurityTokenKeyfile &keyfile);
-		static vector <SecurityTokenKeyfile> GetAvailableKeyfiles (CK_SLOT_ID *slotIdFilter = nullptr, const wstring keyfileIdFilter = wstring(), char* pin = nullptr);
+		static vector <SecurityTokenKeyfile> GetAvailableKeyfiles (CK_SLOT_ID *slotIdFilter = nullptr, const wstring keyfileIdFilter = wstring());
 		static void GetKeyfileData (const SecurityTokenKeyfile &keyfile, vector <byte> &keyfileData);
-		static void GetKeyfileData (const SecurityTokenKeyfile &keyfile, char* pin, vector <byte> &keyfileData);
 		static list <SecurityTokenInfo> GetAvailableTokens ();
 		static SecurityTokenInfo GetTokenInfo (CK_SLOT_ID slotId);
 #ifdef TC_WINDOWS
@@ -197,7 +197,7 @@ namespace VeraCrypt
 #endif
 		static bool IsInitialized () { return Initialized; }
 		static bool IsKeyfilePathValid (const wstring &securityTokenKeyfilePath);
-	
+
 		static const size_t MaxPasswordLength = 128;
 
 	protected:
@@ -206,7 +206,7 @@ namespace VeraCrypt
 		static void GetObjectAttribute (CK_SLOT_ID slotId, CK_OBJECT_HANDLE tokenObject, CK_ATTRIBUTE_TYPE attributeType, vector <byte> &attributeValue);
 		static list <CK_SLOT_ID> GetTokenSlots ();
 		static void Login (CK_SLOT_ID slotId, const char* pin);
-		static void LoginUserIfRequired (CK_SLOT_ID slotId, char* cmdPin = nullptr);
+		static void LoginUserIfRequired (CK_SLOT_ID slotId);
 		static void OpenSession (CK_SLOT_ID slotId);
 		static void CheckLibraryStatus ();
 

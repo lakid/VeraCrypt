@@ -3,8 +3,8 @@
  Copyright (c) 2008-2012 TrueCrypt Developers Association and which is governed
  by the TrueCrypt License 3.0.
 
- Modifications and additions to the original source code (contained in this file) 
- and all other portions of this file are Copyright (c) 2013-2016 IDRIX
+ Modifications and additions to the original source code (contained in this file)
+ and all other portions of this file are Copyright (c) 2013-2017 IDRIX
  and are governed by the Apache License 2.0 the full text of which is
  contained in the file License.txt included in VeraCrypt binary and source
  code distribution packages.
@@ -72,7 +72,7 @@ static void PrintMainMenu ()
 	Print ((BootSectorFlags & TC_BOOT_CFG_MASK_HIDDEN_OS_CREATION_PHASE) != TC_HIDDEN_OS_CREATION_PHASE_NONE
 		? "Boot Non-Hidden System (Boot Manager)"
 		: "Skip Authentication (Boot Manager)");
-	
+
 #else // TC_WINDOWS_BOOT_RESCUE_DISK_MODE
 
 	Print ("Skip Authentication (Boot Manager)");
@@ -184,7 +184,7 @@ static byte AskPassword (Password &password, int& pim)
 
 			ClearBiosKeystrokeBuffer();
 			PrintEndl();
-			
+
 			break;
 
 		case TC_BIOS_KEY_BACKSPACE:
@@ -262,7 +262,7 @@ static byte AskPassword (Password &password, int& pim)
 
 				ClearBiosKeystrokeBuffer();
 				PrintEndl();
-				
+
 				return TC_BIOS_KEY_ENTER;
 
 			case TC_BIOS_KEY_BACKSPACE:
@@ -301,7 +301,7 @@ static byte AskPassword (Password &password, int& pim)
 
 			pim = 10*pim + (asciiCode - '0');
 			pos++;
-			
+
 			if (hidePassword) asciiCode = '*';
 			if (pos < MAX_PIM)
 				PrintChar (asciiCode);
@@ -343,7 +343,7 @@ static bool OpenVolume (byte drive, Password &password, int pim, CRYPTO_INFO **c
 	int volumeType;
 	bool hiddenVolume;
 	uint64 headerSec;
-	
+
 	AcquireSectorBuffer();
 
 	for (volumeType = 1; volumeType <= 2; ++volumeType)
@@ -479,7 +479,7 @@ static bool MountVolume (byte drive, byte &exitKey, bool skipNormal, bool skipHi
 		EncryptedVirtualPartition.Drive = BootDrive;
 
 		EncryptedVirtualPartition.StartSector = BootCryptoInfo->EncryptedAreaStart >> TC_LB_SIZE_BIT_SHIFT_DIVISOR;
-		
+
 		PimValueOrHiddenVolumeStartUnitNo = EncryptedVirtualPartition.StartSector;
 		HiddenVolumeStartSector = PartitionFollowingActive.StartSector;
 		HiddenVolumeStartSector += EncryptedVirtualPartition.StartSector;
@@ -535,7 +535,7 @@ static byte BootEncryptedDrive ()
 
 	if (!MountVolume (BootDrive, exitKey, PreventNormalSystemBoot, false))
 		return exitKey;
-	
+
 	if (!CheckMemoryRequirements ())
 		goto err;
 
@@ -581,7 +581,9 @@ err:
 		crypto_close (BootCryptoInfo);
 		BootCryptoInfo = NULL;
 	}
-
+#ifndef TC_WINDOWS_BOOT_RESCUE_DISK_MODE
+	PimValueOrHiddenVolumeStartUnitNo.LowPart = -1;
+#endif
 	EncryptedVirtualPartition.Drive = TC_INVALID_BIOS_DRIVE;
 	EraseMemory ((void *) TC_BOOT_LOADER_ARGS_OFFSET, sizeof (BootArguments));
 
@@ -765,7 +767,7 @@ static bool CopySystemPartitionToHiddenVolume (byte drive, byte &exitKey)
 			EncryptDataUnits (SectorBuffer, &s, 1, BootCryptoInfo);
 
 			CopyMemory (SectorBuffer, TC_BOOT_LOADER_BUFFER_SEGMENT, i * TC_LB_SIZE, TC_LB_SIZE);
-		} 
+		}
 
 		ReleaseSectorBuffer();
 
@@ -801,6 +803,7 @@ err:
 	GetKeyboardChar();
 
 ret:
+	PimValueOrHiddenVolumeStartUnitNo.LowPart = -1;
 	EraseMemory ((void *) TC_BOOT_LOADER_ARGS_OFFSET, sizeof (BootArguments));
 	return status;
 }
@@ -875,7 +878,7 @@ static void DecryptDrive (byte drive)
 				DecryptDataUnits (SectorBuffer, &s, 1, BootCryptoInfo);
 
 				CopyMemory (SectorBuffer, TC_BOOT_LOADER_BUFFER_SEGMENT, i * TC_LB_SIZE, TC_LB_SIZE);
-			} 
+			}
 
 			ReleaseSectorBuffer();
 
@@ -1250,7 +1253,7 @@ void main ()
 		exitKey = BootEncryptedDrive();
 
 #else // TC_WINDOWS_BOOT_RESCUE_DISK_MODE
-		
+
 		PrintMainMenu();
 		exitKey = BootEncryptedDrive();
 

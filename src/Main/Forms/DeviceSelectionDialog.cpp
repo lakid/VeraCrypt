@@ -3,8 +3,8 @@
  Copyright (c) 2008-2012 TrueCrypt Developers Association and which is governed
  by the TrueCrypt License 3.0.
 
- Modifications and additions to the original source code (contained in this file) 
- and all other portions of this file are Copyright (c) 2013-2016 IDRIX
+ Modifications and additions to the original source code (contained in this file)
+ and all other portions of this file are Copyright (c) 2013-2017 IDRIX
  and are governed by the Apache License 2.0 the full text of which is
  contained in the file License.txt included in VeraCrypt binary and source
  code distribution packages.
@@ -39,7 +39,7 @@ namespace VeraCrypt
 		DeviceListCtrl->InsertColumn (ColumnMountPoint, LangString["MOUNT_POINT"], wxLIST_FORMAT_LEFT, 1);
 		colPermilles.push_back (396);
 #endif
- 
+
 		wxImageList *imageList = new wxImageList (16, 12, true);
 		imageList->Add (Resources::GetDriveIconBitmap(), Resources::GetDriveIconMaskBitmap());
 		DeviceListCtrl->AssignImageList (imageList, wxIMAGE_LIST_SMALL);
@@ -48,13 +48,31 @@ namespace VeraCrypt
 
 		foreach_ref (HostDevice &device, DeviceList)
 		{
-			if (device.Size == 0)
-				continue;
-
 			vector <wstring> fields (DeviceListCtrl->GetColumnCount());
-
+			
 			if (DeviceListCtrl->GetItemCount() > 0)
 				Gui->AppendToListCtrl (DeviceListCtrl, fields);
+			
+			//	i.e. /dev/rdisk0 might have size = 0 in case open() fails because, for example on OSX, 
+			//	SIP is enabled on the machine ; 
+			//	This does not mean that it does not have partitions that have been successfully opened
+			//	and have a size != 0 ;
+			//	Therefore, we do not show the device ONLY if it does not have partitions with size != 0 ;
+			if (device.Size == 0)
+			{
+				bool bHasNonEmptyPartition = false;
+				foreach_ref (HostDevice &partition, device.Partitions)
+				{
+					if (partition.Size)
+					{
+						bHasNonEmptyPartition = true;
+						break;
+					}
+				}
+				
+				if (!bHasNonEmptyPartition)
+					continue;
+			}
 
 #ifdef TC_WINDOWS
 			fields[ColumnDevice] = StringFormatter (L"{0} {1}:", _("Harddisk"), device.SystemNumber);
@@ -64,14 +82,23 @@ namespace VeraCrypt
 			fields[ColumnDevice] = wstring (device.Path) + L":";
 			fields[ColumnMountPoint] = device.MountPoint;
 #endif
-			fields[ColumnSize] = Gui->SizeToString (device.Size);
-			Gui->AppendToListCtrl (DeviceListCtrl, fields, 0, &device); 
+			//	If the size of the device is 0, we do not show the size to avoid confusing the user ;
+			if (device.Size)
+				fields[ColumnSize] = Gui->SizeToString (device.Size);
+			else
+				fields[ColumnSize] = L"";
+			Gui->AppendToListCtrl (DeviceListCtrl, fields, 0, &device);
 
 			foreach_ref (HostDevice &partition, device.Partitions)
 			{
-				fields[ColumnDevice] = 
+				//	If a partition's size is 0, there is no need to show it in the list 
+				//	since this means it is not usable (i.e on OSX, because of SIP enabled in the machine) ;
+				if (!partition.Size)
+					continue;
+
+				fields[ColumnDevice] =
 #ifndef TC_WINDOWS
-					wstring (L"      ") + 
+					wstring (L"      ") +
 #endif
 					wstring (partition.Path);
 
@@ -97,7 +124,7 @@ namespace VeraCrypt
 		StdButtonsOK->Disable();
 		StdButtonsOK->SetDefault();
 	}
-	
+
 	void DeviceSelectionDialog::OnListItemActivated (wxListEvent& event)
 	{
 		if (StdButtonsOK->IsEnabled())
@@ -113,7 +140,8 @@ namespace VeraCrypt
 	void DeviceSelectionDialog::OnListItemSelected (wxListEvent& event)
 	{
 		HostDevice *device = (HostDevice *) (event.GetItem().GetData());
-		if (device)
+		//	If a device's size is 0, we do not enable the 'OK' button since it is not usable
+		if (device && device->Size)
 		{
 			SelectedDevice = *device;
 			StdButtonsOK->Enable();
